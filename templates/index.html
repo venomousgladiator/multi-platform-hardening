@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>System Hardening Tool</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>System Hardening Dashboard</h1>
+        
+        <h2>Windows Policies (Annexure A)</h2>
+        
+        <div class="policy">
+            <span>1.a.i: Enforce Password History</span>
+            <div class="buttons">
+                <button onclick="runScript('Get-PasswordHistory.ps1')">Check</button>
+                <button class="apply-button" onclick="runScript('Set-PasswordHistory.ps1')">Apply (24)</button>
+            </div>
+        </div>
+<h2 style="margin-top: 40px;">Linux Policies (Annexure B)</h2>
+
+        <div class="policy">
+            <span>1.a.i: Disable cramfs Kernel Module</span>
+            <div class="buttons">
+                <button onclick="runScript('Check-CramfsModule.sh')">Check</button>
+                <button class="apply-button" onclick="runScript('Disable-CramfsModule.sh')">Apply</button>
+            </div>
+        </div>
+        
+        <h3>Results:</h3>
+        <pre id="results">[Results will appear here...]</pre>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="/static/js/main.js"></script>
+</body>
+</html>
