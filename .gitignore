@@ -1,0 +1,12 @@
+# Python virtual environment
+venv/
+__pycache__/
+
+# IDE and OS-specific files
+.idea/
+.vscode/
+.DS_Store
+
+
+#pdf
+Annexure_A_B_NTRO_SIH25237.pdf
