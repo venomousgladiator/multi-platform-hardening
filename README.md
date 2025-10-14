@@ -24,21 +24,7 @@ PowerShell (.ps1) for deep integration with Windows.
 
 Bash (.sh) for universal compatibility on Linux.
 
-📂 Project Structure
-The project is organized into a clean and scalable structure:
 
-/
-├── app.py                  # Main Flask web server
-├── scripts/
-│   ├── windows/            # PowerShell scripts for Windows
-│   └── linux/              # Bash scripts for Linux
-├── templates/
-│   └── index.html          # Frontend HTML template
-├── static/
-│   ├── css/style.css       # Styles for the web interface
-│   └── js/main.js          # Client-side JavaScript for interactivity
-├── rollback/               # Stores JSON files for rollback states
-└── requirements.txt        # Python dependencies
 🚀 Setup and Installation
 Follow these steps on the target machine (either a Windows or Ubuntu VM) where you want to run the tool.
 
@@ -100,3 +86,7 @@ Apply a Policy: Click the "Apply" button to enforce the recommended hardening se
 View Rollbacks: After applying a policy, click the "Refresh Rollbacks" button at the bottom of the page.
 
 Perform a Rollback: A list of saved states will appear. Click the "Rollback" button next to a file to revert the change to its original state.
+
+
+CLI Usage : python cli.py Set-PasswordHistory.ps1 
+            sudo python3 cli.py Disable-CramfsModule.sh

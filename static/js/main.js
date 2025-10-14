@@ -79,3 +79,28 @@ socket.on('rollback_list', function(data) {
         container.innerHTML = '<p>No rollback files found.</p>';
     }
 });
+
+function generateReport() {
+    const reportStatus = document.getElementById('report-status');
+    reportStatus.textContent = 'Generating report, this may take a moment...';
+    
+    // Collect all the "Check" script names from the UI
+    const checkScripts = [];
+    document.querySelectorAll('.policy .buttons button:first-child').forEach(button => {
+        const scriptName = button.getAttribute('onclick').match(/'([^']+)'/)[1];
+        if (scriptName.startsWith('Get-') || scriptName.startsWith('Check-')) {
+            checkScripts.push(scriptName);
+        }
+    });
+
+    socket.emit('generate_report', { scripts: checkScripts });
+}
+
+socket.on('report_generated', function(data) {
+    const reportStatus = document.getElementById('report-status');
+    if (data.filename) {
+        reportStatus.textContent = `Report generated successfully: ${data.filename}`;
+    } else {
+        reportStatus.textContent = `Error generating report: ${data.error}`;
+    }
+});

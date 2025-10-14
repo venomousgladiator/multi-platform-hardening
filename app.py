@@ -4,7 +4,23 @@ import subprocess
 import sys
 import json
 import os
+import logging
+from logging.handlers import RotatingFileHandler
+from report_generator import generate_report
 
+
+if not os.path.exists('logs'):
+    os.makedirs('logs')
+
+log_handler = RotatingFileHandler('logs/hardening_tool.log', maxBytes=100000, backupCount=5)
+log_handler.setFormatter(logging.Formatter(
+    '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+))
+log_handler.setLevel(logging.INFO)
+
+app = Flask(__name__)
+app.logger.addHandler(log_handler)
+app.logger.setLevel(logging.INFO)
 app = Flask(__name__)
 socketio = SocketIO(app)
 
@@ -17,7 +33,8 @@ def index():
 def handle_run_script(data):
     """Listens for a command from the browser to run a script."""
     script_name = data['script_name']
-    
+    app.logger.info(f"Executing script: {script_name}")
+
     # Determine the OS and construct the command
     if sys.platform == "win32":
         command = f"powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\windows\\{script_name}"
@@ -56,7 +73,33 @@ def handle_list_rollbacks():
         socketio.emit('rollback_list', {'files': files})
     except Exception as e:
         socketio.emit('rollback_list', {'files': [], 'error': str(e)})
+@socketio.on('generate_report')
+def handle_generate_report(data):
+    """Runs all 'Check' scripts and generates a PDF report."""
+    app.logger.info("Starting report generation.")
+    scripts_to_audit = data['scripts']
+    audit_results = []
+    
+    for script_name in scripts_to_audit:
+        try:
+            if sys.platform == "win32":
+                command = f"powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\windows\\{script_name}"
+            else:
+                command = f"./scripts/linux/{script_name}"
+            
+            output = subprocess.check_output(command, shell=True, text=True, stderr=subprocess.PIPE)
+            audit_results.append(json.loads(output))
+        except Exception as e:
+            audit_results.append({"parameter": script_name, "status": "Error", "details": str(e)})
 
+    try:
+        report_name = generate_report(audit_results)
+        app.logger.info(f"Report generated: {report_name}")
+        socketio.emit('report_generated', {'filename': report_name})
+    except Exception as e:
+        app.logger.error(f"Failed to generate report: {e}")
+        socketio.emit('report_generated', {'error': str(e)})
+        
 @socketio.on('run_rollback')
 def handle_run_rollback(data):
     """Executes a rollback script using a value from a rollback file."""
