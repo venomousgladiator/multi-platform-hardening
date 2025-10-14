@@ -64,10 +64,16 @@ def handle_run_rollback(data):
     filepath = os.path.join('rollback', filename)
 
     try:
+        # --- FIX: Check if the file is empty before trying to read it ---
+        if os.path.getsize(filepath) == 0:
+            raise ValueError("Rollback file is empty. Cannot proceed.")
+
         with open(filepath, 'r') as f:
             rollback_data = json.load(f)
         
-        value_to_restore = rollback_data['value']
+        value_to_restore = rollback_data.get('value')
+        if value_to_restore is None:
+            raise ValueError("Rollback file is missing the 'value' key.")
         
         # Determine which rollback script to use based on filename
         rollback_script_name = ""
@@ -92,13 +98,12 @@ def handle_run_rollback(data):
         output = subprocess.check_output(command, shell=True, text=True, stderr=subprocess.PIPE)
         socketio.emit('script_result', {'output': output})
         
-        # Optional: You can uncomment the line below to delete the rollback file after a successful run
-        # os.remove(filepath)
+        # On success, delete the used rollback file
+        os.remove(filepath)
         
     except Exception as e:
-        error_json = json.dumps({"parameter": "Rollback", "status": "Error", "details": str(e)})
+        error_json = json.dumps({"parameter": f"Rollback for {filename}", "status": "Error", "details": str(e)})
         socketio.emit('script_result', {'output': error_json})
-
 if __name__ == '__main__':
     # Runs the web server
     # allow_unsafe_werkzeug is needed for newer versions of Flask with SocketIO
