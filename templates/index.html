@@ -2,46 +2,102 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>System Hardening Tool</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SysWarden - System Hardening Tool</title>
     <link rel="stylesheet" href="/static/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div class="container">
-        <h1>System Hardening Dashboard</h1>
-        
-        <h2>Windows Policies (Annexure A)</h2>
-        
-        <div class="policy">
-            <span>1.a.i: Enforce Password History</span>
-            <div class="buttons">
-                <button onclick="runScript('Get-PasswordHistory.ps1')">Check</button>
-                <button class="apply-button" onclick="runScript('Set-PasswordHistory.ps1')">Apply (24)</button>
-            </div>
+    <div class="top-bar">
+        <div class="logo">SysWarden</div>
+        <div class="system-info">
+            <span id="os-type">Windows</span>
+            <span id="current-time"></span>
         </div>
-<h2 style="margin-top: 40px;">Linux Policies (Annexure B)</h2>
-
-        <div class="policy">
-            <span>1.a.i: Disable cramfs Kernel Module</span>
-            <div class="buttons">
-                <button onclick="runScript('Check-CramfsModule.sh')">Check</button>
-                <button class="apply-button" onclick="runScript('Disable-CramfsModule.sh')">Apply</button>
-            </div>
-        </div>
-        
-        <h3>Results:</h3>
-        <pre id="results">[Results will appear here...]</pre>
     </div>
 
-<h3 style="margin-top: 40px;">Available Rollbacks</h3>
-        <div id="rollback-container">
-            <p>Click "Refresh Rollbacks" to see available actions.</p>
+    <div class="container">
+        <div class="dashboard-header">
+            <h1>System Hardening Dashboard</h1>
+            <div class="quick-actions">
+                <button id="generate-report-btn" onclick="generateReport()">
+                    <span class="icon">📊</span>
+                    Generate Report
+                </button>
+                <button onclick="listRollbacks()">
+                    <span class="icon">↩️</span>
+                    View Rollbacks
+                </button>
+            </div>
         </div>
-        <button onclick="listRollbacks()" style="margin-top: 10px;">Refresh Rollbacks</button>
 
-<div class="report-section">
-            <button id="generate-report-btn" onclick="generateReport()">Generate Full System Report (PDF)</button>
+        <div class="dashboard-grid">
+            <div class="policy-section">
+                <div class="section-header">
+                    <h2>Windows Policies (Annexure A)</h2>
+                    <div class="level-filter">
+                        <button class="level-btn active" data-level="L1">L1</button>
+                        <button class="level-btn" data-level="L2">L2</button>
+                        <button class="level-btn" data-level="L3">L3</button>
+                    </div>
+                </div>
+                <div class="policies-container">
+                    <div class="policy">
+                        <div class="policy-info">
+                            <span class="policy-name">1.a.i: Enforce Password History</span>
+                            <span class="policy-status" data-status="pending">Pending Check</span>
+                        </div>
+                        <div class="buttons">
+                            <button onclick="runScript('Get-PasswordHistory.ps1')" class="check-btn">
+                                <span class="icon">🔍</span> Check
+                            </button>
+                            <button class="apply-button" onclick="runScript('Set-PasswordHistory.ps1')">
+                                <span class="icon">✔️</span> Apply
+                            </button>
+                        </div>
+                    </div>
+                    <!-- More policy items -->
+                </div>
+            </div>
+
+            <div class="policy-section">
+                <div class="section-header">
+                    <h2>Linux Policies (Annexure B)</h2>
+                </div>
+                <div class="policies-container">
+                    <div class="policy">
+                        <div class="policy-info">
+                            <span class="policy-name">1.a.i: Disable cramfs Kernel Module</span>
+                            <span class="policy-status" data-status="pending">Pending Check</span>
+                        </div>
+                        <div class="buttons">
+                            <button onclick="runScript('Check-CramfsModule.sh')" class="check-btn">
+                                <span class="icon">🔍</span> Check
+                            </button>
+                            <button class="apply-button" onclick="runScript('Disable-CramfsModule.sh')">
+                                <span class="icon">✔️</span> Apply
+                            </button>
+                        </div>
+                    </div>
+                    <!-- More policy items -->
+                </div>
+            </div>
+        </div>
+
+        <div class="results-section">
+            <h3>Execution Results</h3>
+            <pre id="results" class="results-console">[Results will appear here...]</pre>
+        </div>
+
+        <div class="rollback-section">
+            <h3>System Rollbacks</h3>
+            <div id="rollback-container" class="rollback-grid"></div>
+        </div>
+
+        <div class="report-status-section">
             <p id="report-status"></p>
         </div>
+    </div>
 
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script src="/static/js/main.js"></script>

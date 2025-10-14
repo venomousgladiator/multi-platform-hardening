@@ -1,153 +1,135 @@
-from flask import Flask, render_template
-from flask_socketio import SocketIO
 import subprocess
 import sys
 import json
+import platform
 import os
 import logging
 from logging.handlers import RotatingFileHandler
+import datetime
 from report_generator import generate_report
+import cmd
+from tqdm import tqdm
+from flask import Flask, render_template, send_from_directory
+from flask_socketio import SocketIO
 
-
+# --- 1. Setup Logging & Global Definitions ---
 if not os.path.exists('logs'):
     os.makedirs('logs')
+log_handler = RotatingFileHandler('logs/syswarden.log', maxBytes=100000, backupCount=5)
+log_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s: %(message)s'))
+logger = logging.getLogger(__name__)
+logger.addHandler(log_handler)
+logger.setLevel(logging.INFO)
 
-log_handler = RotatingFileHandler('logs/hardening_tool.log', maxBytes=100000, backupCount=5)
-log_handler.setFormatter(logging.Formatter(
-    '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
-))
-log_handler.setLevel(logging.INFO)
+WINDOWS_MODULES = {
+    "L1": ["AccountPolicies.ps1", "LocalPolicies.ps1", "SecurityOptions.ps1"],
+    "L2": ["SystemServices.ps1", "WindowsFirewall.ps1"],
+    "L3": ["AdvancedAudit.ps1", "Defender.ps1"]
+}
+LINUX_MODULES = {
+    "L1": ["Filesystem.sh", "PackageManagement.sh", "AccessControl.sh"],
+    "L2": ["Services.sh", "Network.sh"],
+    "L3": ["Firewall.sh", "LoggingAndAuditing.sh"]
+}
 
-app = Flask(__name__)
-app.logger.addHandler(log_handler)
-app.logger.setLevel(logging.INFO)
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+
+# --- 2. Shared Core Logic ---
+# This function is now used by both the CLI and the Web UI
+def run_profile(level, mode, os_type, socketio_instance=None):
+    logger.info(f"Starting '{mode}' process for Level {level} on {os_type}")
+    
+    all_results = []
+    modules_to_run = []
+    levels = WINDOWS_MODULES if os_type == "Windows" else LINUX_MODULES
+    
+    if level in ["L1", "L2", "L3"]: modules_to_run.extend(levels.get("L1", []))
+    if level in ["L2", "L3"]: modules_to_run.extend(levels.get("L2", []))
+    if level in ["L3"]: modules_to_run.extend(levels.get("L3", []))
+    modules_to_run = sorted(list(set(modules_to_run)))
+    
+    total_modules = len(modules_to_run)
+    
+    for i, module_name in enumerate(modules_to_run):
+        # Emit progress to the web UI if a socketio instance is provided
+        if socketio_instance:
+            socketio_instance.emit('progress_update', {'current': i + 1, 'total': total_modules, 'module': module_name})
+
+        module_path = os.path.join('scripts', os_type.lower(), 'modules', module_name)
+        if not os.path.exists(module_path):
+            error_msg = f"Module file not found at '{module_path}'"
+            if socketio_instance:
+                socketio_instance.emit('console_output', {'status': 'Failure', 'parameter': 'System Error', 'details': error_msg})
+            continue
+
+        if os_type == "Windows":
+            command = f"powershell.exe -ExecutionPolicy Bypass -File .\\{module_path} -Mode {mode} -Level {level}"
+        else:
+            command = f"./{module_path} {mode} {level}"
+        
+        try:
+            process = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
+            for line in process.stdout.strip().split('\n'):
+                if not line: continue
+                try:
+                    data = json.loads(line)
+                    all_results.append(data)
+                    if socketio_instance:
+                        socketio_instance.emit('console_output', data)
+                except json.JSONDecodeError:
+                    if socketio_instance:
+                        socketio_instance.emit('console_output', {'status': 'Warning', 'parameter': 'RAW Output', 'details': line.strip()})
+        except subprocess.CalledProcessError as e:
+            error_details = f"Module '{module_name}' exited with an error. STDERR: {e.stderr.strip()}"
+            if socketio_instance:
+                socketio_instance.emit('console_output', {'status': 'Failure', 'parameter': f'Module Error: {module_name}', 'details': error_details})
+    
+    return all_results
+
+# --- 3. Web Application (Flask & SocketIO) ---
 app = Flask(__name__)
 socketio = SocketIO(app)
 
 @app.route('/')
 def index():
-    """Serves the main HTML page."""
     return render_template('index.html')
 
-@socketio.on('run_script')
-def handle_run_script(data):
-    """Listens for a command from the browser to run a script."""
-    script_name = data['script_name']
-    app.logger.info(f"Executing script: {script_name}")
+@app.route('/reports/<path:filename>')
+def download_report(filename):
+    return send_from_directory('reports', filename, as_attachment=True)
 
-    # Determine the OS and construct the command
-    if sys.platform == "win32":
-        command = f"powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\windows\\{script_name}"
-    else: # For Linux/macOS
-        command = f"./scripts/linux/{script_name}"
-        
-    try:
-        # Run the script and capture its output
-        output = subprocess.check_output(command, shell=True, text=True, stderr=subprocess.PIPE)
-        # Send the successful result (which should be JSON) back to the browser
-        socketio.emit('script_result', {'output': output})
-    except subprocess.CalledProcessError as e:
-        # To maintain consistency, format the error as a JSON string
-        error_json = json.dumps({
-            "parameter": script_name,
-            "status": "Execution Error",
-            "details": e.stderr.strip()
-        })
-        socketio.emit('script_result', {'output': error_json})
-    except Exception as e:
-        error_json = json.dumps({
-            "parameter": script_name,
-            "status": "Application Error",
-            "details": str(e)
-        })
-        socketio.emit('script_result', {'output': error_json})
-
-@socketio.on('list_rollbacks')
-def handle_list_rollbacks():
-    """Scans the rollback directory and sends the list of files to the browser."""
-    try:
-        if not os.path.exists('rollback'):
-            os.makedirs('rollback')
-        
-        files = [f for f in os.listdir('rollback') if f.endswith('.json')]
-        socketio.emit('rollback_list', {'files': files})
-    except Exception as e:
-        socketio.emit('rollback_list', {'files': [], 'error': str(e)})
-@socketio.on('generate_report')
-def handle_generate_report(data):
-    """Runs all 'Check' scripts and generates a PDF report."""
-    app.logger.info("Starting report generation.")
-    scripts_to_audit = data['scripts']
-    audit_results = []
+@socketio.on('run_action')
+def handle_run_action(data):
+    level = data.get('level', 'L1')
+    mode = data.get('mode', 'Audit')
+    os_type = platform.system()
     
-    for script_name in scripts_to_audit:
-        try:
-            if sys.platform == "win32":
-                command = f"powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\windows\\{script_name}"
-            else:
-                command = f"./scripts/linux/{script_name}"
-            
-            output = subprocess.check_output(command, shell=True, text=True, stderr=subprocess.PIPE)
-            audit_results.append(json.loads(output))
-        except Exception as e:
-            audit_results.append({"parameter": script_name, "status": "Error", "details": str(e)})
+    socketio.emit('action_started', {'mode': mode, 'level': level})
+    results = run_profile(level, mode, os_type, socketio)
+    
+    if mode == 'Audit' and data.get('generate_report', False):
+        if not results:
+            socketio.emit('action_finished', {'status': 'Failure', 'message': 'Report generation failed: No audit data collected.'})
+            return
+        report_filename = generate_report(results, os_type, level)
+        socketio.emit('action_finished', {'status': 'Success', 'message': 'Report generated successfully!', 'filename': os.path.basename(report_filename)})
+    else:
+        socketio.emit('action_finished', {'status': 'Success', 'message': f'{mode} process completed for level {level}.'})
 
-    try:
-        report_name = generate_report(audit_results)
-        app.logger.info(f"Report generated: {report_name}")
-        socketio.emit('report_generated', {'filename': report_name})
-    except Exception as e:
-        app.logger.error(f"Failed to generate report: {e}")
-        socketio.emit('report_generated', {'error': str(e)})
-        
-@socketio.on('run_rollback')
-def handle_run_rollback(data):
-    """Executes a rollback script using a value from a rollback file."""
-    filename = data['filename']
-    filepath = os.path.join('rollback', filename)
+# ... (Existing CLI code can be here, or run separately) ...
+# For simplicity, we assume this file is now primarily for the web app.
 
-    try:
-        # --- FIX: Check if the file is empty before trying to read it ---
-        if os.path.getsize(filepath) == 0:
-            raise ValueError("Rollback file is empty. Cannot proceed.")
-
-        with open(filepath, 'r') as f:
-            rollback_data = json.load(f)
-        
-        value_to_restore = rollback_data.get('value')
-        if value_to_restore is None:
-            raise ValueError("Rollback file is missing the 'value' key.")
-        
-        # Determine which rollback script to use based on filename
-        rollback_script_name = ""
-        command = ""
-
-        # --- WINDOWS LOGIC ---
-        if "PasswordHistory" in filename:
-            rollback_script_name = "Rollback-PasswordHistory.ps1"
-            if sys.platform == "win32":
-                command = f"powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\windows\\{rollback_script_name} -RollbackValue {value_to_restore}"
-        
-        # --- LINUX LOGIC ---
-        elif "CramfsModule" in filename:
-            rollback_script_name = "Enable-CramfsModule.sh"
-            if "linux" in sys.platform:
-                command = f"./scripts/linux/{rollback_script_name} {value_to_restore}"
-
-        if not command:
-            raise ValueError(f"Could not determine the correct rollback script or OS for {filename}.")
-
-        # Run the constructed command
-        output = subprocess.check_output(command, shell=True, text=True, stderr=subprocess.PIPE)
-        socketio.emit('script_result', {'output': output})
-        
-        # On success, delete the used rollback file
-        os.remove(filepath)
-        
-    except Exception as e:
-        error_json = json.dumps({"parameter": f"Rollback for {filename}", "status": "Error", "details": str(e)})
-        socketio.emit('script_result', {'output': error_json})
 if __name__ == '__main__':
-    # Runs the web server
-    # allow_unsafe_werkzeug is needed for newer versions of Flask with SocketIO
+    # You can run the web server with: python app.py
+    # Or the CLI with: python cli.py
+    print("Starting SysWarden Web UI...")
+    logger.info("SysWarden Web UI started.")
     socketio.run(app, debug=True, allow_unsafe_werkzeug=True)
