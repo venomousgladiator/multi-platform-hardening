@@ -7,9 +7,9 @@ import logging
 from logging.handlers import RotatingFileHandler
 import datetime
 from report_generator import generate_report
-import cmd # The library for creating interactive shells
+import cmd
 
-# --- (Logging, Module Definitions, and bcolors class remain the same) ---
+# --- 1. Setup Logging & Global Definitions ---
 if not os.path.exists('logs'):
     os.makedirs('logs')
 log_handler = RotatingFileHandler('logs/syswarden_cli.log', maxBytes=100000, backupCount=5)
@@ -32,14 +32,14 @@ LINUX_MODULES = {
 class bcolors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
-    OKCYAN = '\03_3[96m'
+    OKCYAN = '\033[96m'
     OKGREEN = '\033[92m'
     WARNING = '\033[93m'
     FAIL = '\033[91m'
     ENDC = '\033[0m'
     BOLD = '\033[1m'
-# --- (End of unchanged code) ---
 
+# --- 2. The Main Interactive Shell Class ---
 class SysWardenShell(cmd.Cmd):
     intro = f'{bcolors.BOLD}Welcome to the SysWarden Interactive Shell. Type help or ? to list commands.\n{bcolors.ENDC}'
     prompt = f'({bcolors.OKBLUE}SysWarden{bcolors.ENDC}) > '
@@ -60,24 +60,28 @@ class SysWardenShell(cmd.Cmd):
         modules_to_run = []
         levels = WINDOWS_MODULES if self.os_type == "Windows" else LINUX_MODULES
         
-        if level in ["L1", "L2", "L3"]: modules_to_run.extend(levels["L1"])
-        if level in ["L2", "L3"]: modules_to_run.extend(levels["L2"])
-        if level in ["L3"]: modules_to_run.extend(levels["L3"])
-
-        modules_to_run = list(dict.fromkeys(modules_to_run)) # Remove duplicates
+        if level in ["L1", "L2", "L3"]: modules_to_run.extend(levels.get("L1", []))
+        if level in ["L2", "L3"]: modules_to_run.extend(levels.get("L2", []))
+        if level in ["L3"]: modules_to_run.extend(levels.get("L3", []))
+        modules_to_run = sorted(list(set(modules_to_run)))
 
         for i, module_name in enumerate(modules_to_run):
             print(f"\n[{i+1}/{len(modules_to_run)}] {bcolors.HEADER}--- Executing Module: {module_name} ---{bcolors.ENDC}")
             
+            module_path = os.path.join('scripts', self.os_type.lower(), 'modules', module_name)
+            if not os.path.exists(module_path):
+                print(f"  {bcolors.FAIL}ERROR:{bcolors.ENDC} Module file not found at '{module_path}'")
+                continue
+
             if self.os_type == "Windows":
-                command = f"powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\windows\\modules\\{module_name} -Mode {mode} -Level {level}"
+                command = f"powershell.exe -ExecutionPolicy Bypass -File .\\{module_path} -Mode {mode} -Level {level}"
             else:
-                command = f"./scripts/linux/modules/{module_name} {mode} {level}"
+                command = f"./{module_path} {mode} {level}"
             
             try:
                 process = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
-                # The new module scripts output one JSON object per line, so we process each
                 for line in process.stdout.strip().split('\n'):
+                    if not line: continue
                     try:
                         data = json.loads(line)
                         all_results.append(data)
@@ -86,62 +90,95 @@ class SysWardenShell(cmd.Cmd):
                         print(f"  [{status_color}{status}{bcolors.ENDC}] {data.get('parameter', 'N/A')}: {data.get('details', 'N/A')}")
                         logger.info(f"[{status}] {data.get('parameter', 'N/A')}: {data.get('details', 'N/A')}")
                     except json.JSONDecodeError:
-                        continue # Ignore empty or non-JSON lines
+                        print(f"  {bcolors.WARNING}RAW: {line.strip()}{bcolors.ENDC}")
             except subprocess.CalledProcessError as e:
-                print(f"  {bcolors.FAIL}MODULE ERROR:{bcolors.ENDC} Module '{module_name}' exited with an error.")
+                print(f"  {bcolors.FAIL}MODULE ERROR:{bcolors.ENDC} Module '{module_name}' exited with a non-zero status.")
                 print(f"  {bcolors.FAIL}STDERR: {e.stderr.strip()}{bcolors.ENDC}")
                 logger.error(f"Module '{module_name}' exited with error: {e.stderr.strip()}")
         
         return all_results
 
-    # --- Shell Commands ---
+    # --- Shell Command Implementations ---
     def do_harden(self, arg):
-        """Apply security policies to the system. Usage: harden <L1|L2|L3>"""
+        """Apply security policies. Usage: harden <L1|L2|L3>"""
         if arg not in ['L1', 'L2', 'L3']:
             print(f"{bcolors.FAIL}Error: Please specify a valid level (L1, L2, or L3).{bcolors.ENDC}")
             return
         self._run_profile(arg, 'Harden')
 
     def do_audit(self, arg):
-        """Check system compliance without making changes. Usage: audit <L1|L2|L3>"""
+        """Check system compliance. Usage: audit <L1|L2|L3>"""
         if arg not in ['L1', 'L2', 'L3']:
             print(f"{bcolors.FAIL}Error: Please specify a valid level (L1, L2, or L3).{bcolors.ENDC}")
             return
         self._run_profile(arg, 'Audit')
     
     def do_report(self, arg):
-        """Run a full L3 audit and generate a PDF report. Usage: report"""
-        results = self._run_profile('L3', 'Audit')
+        """Run an audit and generate a PDF report. Usage: report <L1|L2|L3>"""
+        if arg not in ['L1', 'L2', 'L3']:
+            print(f"{bcolors.FAIL}Error: Please specify a level for the report (L1, L2, or L3).{bcolors.ENDC}")
+            return
+        results = self._run_profile(arg, 'Audit')
         if not results:
             print(f"{bcolors.FAIL}Report generation failed: No audit data was collected.{bcolors.ENDC}")
             return
         
-        print(f"\n{bcolors.BOLD}Generating PDF report...{bcolors.ENDC}")
-        report_filename = generate_report(results, self.os_type, 'L3')
+        print(f"\n{bcolors.BOLD}Generating PDF report for level {arg}...{bcolors.ENDC}")
+        report_filename = generate_report(results, self.os_type, arg)
         print(f"{bcolors.OKGREEN}Report successfully generated: {report_filename}{bcolors.ENDC}")
-        logger.info(f"PDF report generated: {report_filename}")
 
     def do_rollbacks(self, arg):
         """List available rollback files. Usage: rollbacks"""
-        print(f"{bcolors.HEADER}--- Available Rollback Files ---{bcolors.ENDC}")
-        if not os.path.exists('rollback') or not os.listdir('rollback'):
+        print(f"\n{bcolors.HEADER}--- Available Rollback Files ---{bcolors.ENDC}")
+        rollback_dir = 'rollback'
+        if not os.path.exists(rollback_dir) or not os.listdir(rollback_dir):
             print("No rollback files found.")
             return
-        files = sorted([f for f in os.listdir('rollback') if f.endswith(".json")], reverse=True)
+        files = sorted([f for f in os.listdir(rollback_dir) if f.endswith(".json")], reverse=True)
         for filename in files:
             print(f"  - {filename}")
     
     def do_rollback(self, arg):
-        """Revert changes using a specific rollback file. Usage: rollback <filename>"""
-        if not arg:
+        """Revert changes from a rollback file. Usage: rollback <filename>"""
+        filename = arg.strip()
+        if not filename:
             print(f"{bcolors.FAIL}Error: Please specify a rollback filename.{bcolors.ENDC}")
             return
-        # ... (Implementation similar to old CLI, but simplified) ...
-        print(f"Executing rollback for {arg}...")
-        # Add rollback execution logic here
-    
+        
+        try:
+            module_base_name = filename.split('_', 1)[1].replace('.json', '')
+        except IndexError:
+            print(f"{bcolors.FAIL}Error: Invalid rollback file format. Expected 'TIMESTAMP_ModuleName.json'.{bcolors.ENDC}")
+            return
+
+        rollback_path = os.path.join('rollback', filename)
+        if not os.path.exists(rollback_path):
+            print(f"{bcolors.FAIL}Error: Rollback file '{filename}' not found.{bcolors.ENDC}")
+            return
+
+        if self.os_type == "Windows":
+            module_name = f"{module_base_name}.ps1"
+            module_path = os.path.join('scripts', 'windows', 'modules', module_name)
+            command = f"powershell.exe -ExecutionPolicy Bypass -File .\\{module_path} -Mode Rollback -RollbackFile {filename}"
+        else:
+            module_name = f"{module_base_name}.sh"
+            module_path = os.path.join('scripts', 'linux', 'modules', module_name)
+            command = f"./{module_path} Rollback {filename}"
+        
+        print(f"Executing rollback for {filename} using module {module_name}...")
+        try:
+            process = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
+            for line in process.stdout.strip().split('\n'):
+                 if not line: continue
+                 print(f"  {bcolors.OKGREEN}{line.strip()}{bcolors.ENDC}")
+            print(f"{bcolors.OKGREEN}Rollback completed successfully.{bcolors.ENDC}")
+            os.remove(rollback_path)
+            print(f"{bcolors.OKBLUE}Deleted used rollback file: {filename}{bcolors.ENDC}")
+        except subprocess.CalledProcessError as e:
+            print(f"  {bcolors.FAIL}ROLLBACK FAILED:{bcolors.ENDC} {e.stderr.strip()}")
+
     def do_cleanup_rollbacks(self, arg):
-        """Deletes old rollback files. Usage: cleanup_rollbacks <all|#_of_days_old>"""
+        """Deletes old rollback files. Usage: cleanup_rollbacks <all | #_of_days>"""
         if not arg or (arg != 'all' and not arg.isdigit()):
             print(f"{bcolors.FAIL}Usage: cleanup_rollbacks <all | number_of_days>{bcolors.ENDC}")
             return
@@ -163,7 +200,7 @@ class SysWardenShell(cmd.Cmd):
                     if age.days >= int(arg):
                         os.remove(filepath)
                         count += 1
-                except ValueError: continue
+                except (ValueError, FileNotFoundError): continue
         print(f"{bcolors.OKGREEN}Cleanup complete. Deleted {count} rollback file(s).{bcolors.ENDC}")
 
     def do_exit(self, arg):
@@ -171,6 +208,10 @@ class SysWardenShell(cmd.Cmd):
         print("Exiting SysWarden.")
         return True
 
+    def emptyline(self):
+        pass
+
+# --- Main Execution Block ---
 if __name__ == '__main__':
     if platform.system() == "Linux" and os.geteuid() != 0:
         print(f"{bcolors.FAIL}Error: This script must be run with sudo on Linux.{bcolors.ENDC}")
