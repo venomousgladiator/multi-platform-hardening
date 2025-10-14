@@ -1,3 +1,4 @@
 Flask
 Flask-SocketIO
 fpdf2
+tqdm
