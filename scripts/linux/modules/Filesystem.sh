@@ -36,18 +36,17 @@ apply_kernel_module_hardening() {
 
 
 # --- Main script execution logic ---
-# This script runs different functions based on the --level parameter passed from the CLI.
-if [[ "$LEVEL" == "L1" || "$LEVEL" == "L2" || "$LEVEL"GE" == "L3" ]]; then
+# This corrected structure is much cleaner and avoids syntax errors.
+if [[ "$LEVEL" == "L1" || "$LEVEL" == "L2" || "$LEVEL" == "L3" ]]; then
     apply_kernel_module_hardening
 fi
 
 if [[ "$LEVEL" == "L2" || "$LEVEL" == "L3" ]]; then
-    # Add any Filesystem settings that are specific to L2 here
-    # Example: check_partition_options
-    write_result "Filesystem" "Info" "No L2-specific policies in this module yet."
+    # Add any Filesystem settings that are specific to L2 here in the future
+    write_result "Filesystem" "Info" "No L2-specific policies are implemented in this module yet."
 fi
 
 if [[ "$LEVEL" == "L3" ]]; then
-    # Add any Filesystem settings that are specific to L3 here
-    write_result "Filesystem" "Info" "No L3-specific policies in this module yet."
+    # Add any Filesystem settings that are specific to L3 here in the future
+    write_result "Filesystem" "Info" "No L3-specific policies are implemented in this module yet."
 fi
