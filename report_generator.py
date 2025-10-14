@@ -4,27 +4,39 @@ import os
 
 class PDF(FPDF):
     """
-    Custom PDF class to define a professional header and footer.
+    Custom PDF class to define a professional header and footer for all pages.
     """
     def header(self):
-        # Optional: Add a logo
-        # self.image('path/to/logo.png', 10, 8, 33)
+        # Set font for the header
         self.set_font('Arial', 'B', 20)
-        self.set_text_color(34, 43, 69)
+        self.set_text_color(34, 43, 69) # A dark blue for a professional look
         self.cell(0, 10, 'SysWarden Security Compliance Report', 0, 1, 'C')
+        # Draw a subtle line below the header
         self.set_draw_color(220, 220, 220)
-        self.line(10, 25, 200, 25)
+        self.line(10, 25, self.w - 10, 25)
+        # Line break
         self.ln(15)
 
     def footer(self):
+        # Position cursor at 1.5 cm from the bottom
         self.set_y(-15)
+        # Set font for the footer
         self.set_font('Arial', 'I', 8)
-        self.set_text_color(128)
+        self.set_text_color(128) # Gray text
+        # Add a page number with total pages
         self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', 0, 0, 'C')
 
 def generate_report(audit_results, os_type, level):
     """
-    Generates a polished, professional PDF report.
+    Generates a polished, professional PDF report from a list of audit result dictionaries.
+
+    Args:
+        audit_results (list): A list of dictionaries, where each dict represents a policy check.
+        os_type (str): The operating system the audit was run on (e.g., "Windows", "Linux").
+        level (str): The hardening level that was audited (e.g., "L1", "L3").
+
+    Returns:
+        str: The filename of the generated PDF report or an error message.
     """
     pdf = PDF()
     pdf.alias_nb_pages()
@@ -48,9 +60,9 @@ def generate_report(audit_results, os_type, level):
     pdf.set_font('Arial', 'B', 14)
     pdf.cell(0, 10, "2. Executive Summary", 0, 1)
     
-    # Draw a summary table
+    # Draw a clean summary table
     pdf.set_font('Arial', 'B', 11)
-    pdf.set_fill_color(240, 240, 240)
+    pdf.set_fill_color(240, 240, 240) # Header gray
     col_width = (pdf.w - pdf.l_margin - pdf.r_margin) / 2
     pdf.cell(col_width, 10, "Metric", 1, 0, 'C', True)
     pdf.cell(col_width, 10, "Result", 1, 1, 'C', True)
@@ -71,7 +83,7 @@ def generate_report(audit_results, os_type, level):
     # --- Detailed Findings Section ---
     pdf.set_font('Arial', 'B', 14)
     pdf.cell(0, 10, "3. Detailed Compliance Findings", 0, 1)
-    pdf.set_draw_color(200, 200, 200)
+    pdf.set_draw_color(200, 200, 200) # Border color for cards
 
     for result in audit_results:
         status = result.get('status', 'Error')
@@ -79,20 +91,31 @@ def generate_report(audit_results, os_type, level):
         details = result.get('details', 'No details were provided.')
 
         if status == 'Compliant':
-            border_color = (220, 255, 220)
+            header_color = (220, 255, 220) # Light Green
         elif status == 'Not Compliant':
-            border_color = (255, 220, 220)
+            header_color = (255, 220, 220) # Light Red
         else:
-            border_color = (240, 240, 240)
+            header_color = (240, 240, 240) # Gray for Info/Error
         
-        pdf.set_fill_color(*border_color)
+        pdf.set_fill_color(*header_color)
         
+        # Draw a "card" for each finding
         pdf.set_font('Arial', 'B', 11)
         pdf.multi_cell(0, 8, f"  {parameter}", 1, 'L', True)
         
         pdf.set_font('Arial', '', 10)
-        pdf.multi_cell(0, 6, f"     Status: {status}", 'LR', 'L')
-        pdf.multi_cell(0, 6, f"     Details: {details}", 'LRB', 'L')
+        # Use a nested table structure for clean alignment. This is a robust
+        # way to prevent the FPDFException by controlling cell widths.
+        pdf.cell(10, 6, '', 'L', 0) # Left padding
+        pdf.cell(25, 6, 'Status:', 0, 0)
+        pdf.multi_cell(0, 6, f"{status}", 'R', 'L')
+
+        pdf.cell(10, 6, '', 'L', 0) # Left padding
+        pdf.cell(25, 6, 'Details:', 0, 0)
+        pdf.multi_cell(0, 6, f"{details}", 'R', 'L')
+        
+        # Draw the bottom border of the card
+        pdf.cell(0, 0, '', 'T', 1)
         pdf.ln(5)
 
     # --- Save the PDF File ---
@@ -105,3 +128,4 @@ def generate_report(audit_results, os_type, level):
         return report_name
     except Exception as e:
         return f"Error: Could not generate PDF. Reason: {e}"
+
