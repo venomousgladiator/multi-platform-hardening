@@ -1,11 +1,16 @@
 [CmdletBinding()]
 param (
-    # This parameter is passed by the cli.py orchestrator
+    [Parameter(Mandatory=$true)]
+    [ValidateSet("Harden", "Audit", "Rollback")]
+    [string]$Mode,
+
     [ValidateSet("L1", "L2", "L3")]
-    [string]$Level = "L1"
+    [string]$Level = "L1",
+
+    [string]$RollbackFile
 )
 
-# A standardized helper function to send JSON output back to the Python CLI
+# A standardized helper function to send single-line JSON output back to the Python CLI
 function Write-Result {
     param($Parameter, $Status, $Details)
     $output = [PSCustomObject]@{
@@ -13,65 +18,94 @@ function Write-Result {
         status    = $Status
         details   = $Details
     }
-    # This converts the object to a JSON string and prints it to the console
+    # CRITICAL FIX: The -Compress flag creates a single, unbroken line of JSON.
     $output | ConvertTo-Json -Compress -WarningAction SilentlyContinue
 }
 
-# --- Module: Password Policy ---
-function Set-PasswordPolicies {
-    Write-Result "Module: Password Policy" "Info" "Applying all L1 password policies..."
-    
+# --- Internal Functions for This Module ---
+
+function Get-PolicyState {
+    # In a real script, this function queries the live system state.
+    $PasswordHistory = (net accounts | Select-String "Password history").ToString().Split(':')[1].Trim()
+    $MaxPasswordAge = (net accounts | Select-String "Maximum password age").ToString().Split(':')[1].Trim()
+    # Add more queries here...
+
+    return @{
+        "PasswordHistory" = $PasswordHistory;
+        "MaxPasswordAge" = $MaxPasswordAge;
+    }
+}
+
+
+# --- Main Execution Logic ---
+
+if ($Mode -eq "Harden") {
+    $currentState = Get-PolicyState
+    $rollbackData = @() # Array to hold all changes for this module run
+
+    # --- Apply Password History Policy ---
     try {
+        # Create a rollback entry before making the change
+        $rollbackData += [PSCustomObject]@{ parameter="PasswordHistory"; value=$currentState.PasswordHistory }
+        # Apply the hardening
         net accounts /uniquepw:24
         Write-Result "Enforce password history" "Success" "Set to remember last 24 passwords."
-    } catch { Write-Result "Enforce password history" "Failure" $_.Exception.Message }
-
+    } catch {
+        Write-Result "Enforce password history" "Failure" $_.Exception.Message
+    }
+    
+    # --- Apply Max Password Age Policy ---
     try {
+        # Create a rollback entry before making the change
+        $rollbackData += [PSCustomObject]@{ parameter="MaxPasswordAge"; value=$currentState.MaxPasswordAge }
+        # Apply the hardening
         net accounts /maxpwage:90
         Write-Result "Maximum password age" "Success" "Set to 90 days."
-    } catch { Write-Result "Maximum password age" "Failure" $_.Exception.Message }
+    } catch {
+        Write-Result "Maximum password age" "Failure" $_.Exception.Message
+    }
+
+    # --- Finalize: Create a single rollback file for this entire module run ---
+    $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $newRollbackFile = "rollback\$($timestamp)_AccountPolicies.json"
+    $rollbackData | ConvertTo-Json -Compress | Out-File -FilePath $newRollbackFile
+    Write-Result "Rollback" "Info" "Transactional rollback file created at $newRollbackFile"
+
+} elseif ($Mode -eq "Audit") {
+    $currentState = Get-PolicyState
     
-    try {
-        net accounts /minpwage:1
-        Write-Result "Minimum password age" "Success" "Set to 1 day."
-    } catch { Write-Result "Minimum password age" "Failure" $_.Exception.Message }
+    if ([int]$currentState.PasswordHistory -ge 24) {
+        Write-Result "Enforce password history" "Compliant" "Currently set to $($currentState.PasswordHistory)."
+    } else {
+        Write-Result "Enforce password history" "Not Compliant" "Currently set to $($currentState.PasswordHistory), should be >= 24."
+    }
 
-    try {
-        net accounts /minpwlen:12
-        Write-Result "Minimum password length" "Success" "Set to 12 characters."
-    } catch { Write-Result "Minimum password length" "Failure" $_.Exception.Message }
+    if ([int]$currentState.MaxPasswordAge -le 90 -and [int]$currentState.MaxPasswordAge -ne 0) {
+        Write-Result "Maximum password age" "Compliant" "Currently set to $($currentState.MaxPasswordAge) days."
+    } else {
+        Write-Result "Maximum password age" "Not Compliant" "Currently set to $($currentState.MaxPasswordAge), should be <= 90."
+    }
+
+} elseif ($Mode -eq "Rollback") {
+    if (-not (Test-Path $RollbackFile)) {
+        Write-Result "Rollback" "Failure" "Rollback file not found: $RollbackFile"
+        exit 1 # Exit with an error code
+    }
+    $rollbackContent = Get-Content $RollbackFile | ConvertFrom-Json
+    foreach ($item in $rollbackContent) {
+        try {
+            # Logic to revert each setting using the value from the file
+            if ($item.parameter -eq "PasswordHistory") {
+                net accounts /uniquepw:$($item.value)
+            }
+            if ($item.parameter -eq "MaxPasswordAge") {
+                net accounts /maxpwage:$($item.value)
+            }
+            Write-Result "Rollback $($item.parameter)" "Success" "Reverted to '$($item.value)'."
+        } catch {
+            Write-Result "Rollback $($item.parameter)" "Failure" "Could not revert. Error: $_.Exception.Message"
+        }
+    }
+    # After a successful rollback, the file is deleted by the Python script
 }
 
-# --- Module: Account Lockout Policy ---
-function Set-AccountLockoutPolicies {
-    Write-Result "Module: Account Lockout Policy" "Info" "Applying all L1 lockout policies..."
-
-    try {
-        net accounts /lockoutduration:15
-        Write-Result "Account lockout duration" "Success" "Set to 15 minutes."
-    } catch { Write-Result "Account lockout duration" "Failure" $_.Exception.Message }
-
-    try {
-        net accounts /lockoutthreshold:5
-        Write-Result "Account lockout threshold" "Success" "Set to 5 invalid attempts."
-    } catch { Write-Result "Account lockout threshold" "Failure" $_.Exception.Message }
-}
-
-
-# --- Main script execution logic ---
-# This script runs different functions based on the --level parameter passed from the CLI.
-if ($Level -ge "L1") {
-    Set-PasswordPolicies
-    Set-AccountLockoutPolicies
-}
-
-if ($Level -ge "L2") {
-    # Add any Account Policy settings that are specific to L2 here
-    # For now, there are none, but this shows how to extend it.
-    Write-Result "Account Policies" "Info" "No L2-specific policies in this module."
-}
-
-if ($Level -ge "L3") {
-    # Add any Account Policy settings that are specific to L3 here
-    Write-Result "Account Policies" "Info" "No L3-specific policies in this module."
-}
